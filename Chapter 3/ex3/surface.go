@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"fmt"
 	"io/ioutil"
 	"math"
@@ -14,8 +15,6 @@ const (
 	xyscale 	  = width/ 2/ xyrange
 	zscale 	 	  = height* 0.4
 	angle 		  = math.Pi/ 6
-	colorMax      = 0xff0000
-	colorMin      = 0x0000ff
 )
 
 var sin30, cos30 = math.Sin(angle), math.Cos(angle)
@@ -32,36 +31,36 @@ func main () {
 
 	for i := 0; i < cells; i++ {
 		for j := 0;j < cells; j++ {
-			var h float64 = 0.
-			ax, ay, z := corner(i+1, j)
-			if isNotOK(z) {
+			ax, ay, ok := corner(i+1, j)
+			if !ok {
 				fmt.Fprintln(os.Stderr, "surface: z is NaN or Inf.")
 				zVal[i* cells+ j] = math.NaN()
 				continue
 			}
-			h += z
-			bx, by, z := corner(i, j)
-			if isNotOK(z) {
+			bx, by, ok := corner(i, j)
+			if !ok {
 				fmt.Fprintln(os.Stderr, "surface: z is NaN or Inf.")
 				zVal[i* cells+ j] = math.NaN()
 				continue
 			}
-			h += z
-			cx, cy, z := corner(i, j+1)
-			if isNotOK(z) {
+			cx, cy, ok := corner(i, j+1)
+			if !ok {
 				fmt.Fprintln(os.Stderr, "surface: z is NaN or Inf.")
 				zVal[i* cells+ j] = math.NaN()
 				continue
 			}
-			h += z
-			dx, dy, z := corner(i+1, j+1)
-			if isNotOK(z) {
+			dx, dy, ok := corner(i+1, j+1)
+			if !ok {
 				fmt.Fprintln(os.Stderr, "surface: z is NaN or Inf.")
 				zVal[i* cells+ j] = math.NaN()
 				continue
-			}
-			h += z
-			zVal[i* cells+ j] = h
+            }
+            x := xyrange* ((float64(i)+ 0.5)/ cells- 0.5)
+            y := xyrange* ((float64(j)+ 0.5)/ cells- 0.5)
+            z := f(x, y)
+			zVal[i* cells+ j] = z
+            // NEVER DO THIS IN REAL PRODUCTION ENVIRONMENTS
+            // THIS MAY CALL INJECTION ATTACK
 			str += fmt.Sprintf(
 				"<polygon points='%g,%g,%g,%g,%g,%g,%g,%g' style='fill:#%s' />\n",
 				ax, ay, bx, by, cx, cy, dx, dy, "%s")
@@ -74,40 +73,50 @@ func main () {
 	}
 }
 
+func isNaNOrInf(x float64) bool {
+    return math.IsNaN(x) || math.IsInf(x, 0)
+}
+
 func fillColor(str string, z [cells* cells]float64) string {
 	// k = (colorMax- colorMin)/ ((zMax- zMin))
 	// b = colorMaz- zMax* k
-	k := (colorMax- colorMin)/ (zMax- zMin)
-	b := colorMax- zMax* k
+	k := (0xff- 0)/ (zMax- zMin)
+	b := 0xff- zMax* k
 	var color [] interface{}
 	for _, val := range zVal {
-		if isNotOK(val) {
+		if isNaNOrInf(val) {
 			continue
 		}
-		color= append(color, fmt.Sprintf("%08x", int(k* val+ b))[2:])
-	}
-	str = fmt.Sprintf(str, color...)
+        c := int(k* val+ b)
+        if c > 0xff {
+            c = 0xff
+        }
+        if c < 0 {
+            c = 0
+        }
+        color = append(color, fmt.Sprintf("%02x00",c)+ fmt.Sprintf("%02x", 0xff- c))
+    }
+    str = fmt.Sprintf(str, color...)
 	return str
 }
 
-func isNotOK(z float64) bool {
-	return math.IsInf(z, 0) || math.IsNaN(z)
-}
-
-func corner(i, j int) (float64, float64, float64) {
+func corner(i, j int) (float64, float64, bool) {
 	x := xyrange* (float64(i)/ cells- 0.5)
 	y := xyrange* (float64(j)/ cells- 0.5)
 	z := f(x, y)
-	if !isNotOK(z) && z > zMax {
+    if isNaNOrInf(z) {
+        return 0, 0, false
+    }
+    if z > zMax {
 		zMax = z
 	}
-	if !isNotOK(z) && z < zMin {
+	if z < zMin {
 		zMin = z
 	}
 	
 	sx := width/ 2+ (x- y)* cos30* xyscale
 	sy := height/ 2+ (x+ y)* sin30* xyscale- z* zscale
-	return sx, sy, z
+	return sx, sy, true
 }
 
 func f(x, y float64) float64 {
